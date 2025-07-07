@@ -1,0 +1,109 @@
+[
+	{
+		"prompt": "elevated date-night shine for tops",
+		"completion": {
+			"fit": "Body hugging",
+			"fabric": ["Satin", "Velvet", "Silk"]
+		}
+	},
+	{
+		"prompt": "comfy lounge tees",
+		"completion": { "fit": "Relaxed", "sleeve_length": "Short sleeves" }
+	},
+	{
+		"prompt": "office-ready polish shirts",
+		"completion": { "fabric": "Cotton poplin", "neckline": "Collar" }
+	},
+	{
+		"prompt": "flowy dresses for garden-party",
+		"completion": {
+			"fit": "Relaxed",
+			"fabric": ["Chiffon", "Linen"],
+			"sleeve_length": "Short flutter sleeves",
+			"color_or_print": "Pastel floral",
+			"occasion": "Party"
+		}
+	},
+	{
+		"prompt": "elevated evening glam dresses",
+		"completion": {
+			"fit": "Body hugging",
+			"fabric": ["Satin", "Silk"],
+			"sleeve_length": "Sleeveless",
+			"color_or_print": "Sapphire blue",
+			"occasion": "Party",
+			"length": ["Midi", "Mini", "Short"]
+		}
+	},
+	{
+		"prompt": "beachy vacay dress",
+		"completion": {
+			"fit": "Relaxed",
+			"fabric": "Linen",
+			"sleeve_length": "Spaghetti straps",
+			"color_or_print": "Seafoam green",
+			"occasion": "Vacation"
+		}
+	},
+	{
+		"prompt": "dresses for retro 70s look",
+		"completion": {
+			"fit": "Body hugging",
+			"fabric": "Stretch crepe",
+			"sleeve_length": "Cap sleeves",
+			"color_or_print": "Geometric print"
+		}
+	},
+	{
+		"prompt": "pastel colors",
+		"completion": { "color_or_print": "pastel pink / pastel yellow" }
+	},
+	{
+		"prompt": "floral print",
+		"completion": { "color_or_print": "floral print" }
+	},
+	{
+		"prompt": "bold colors",
+		"completion": { "color_or_print": "ruby red / cobalt blue" }
+	},
+	{
+		"prompt": "neutral color",
+		"completion": { "color_or_print": "sand beige / off-white / white" }
+	},
+	{
+		"prompt": "flowy",
+		"completion": { "fit": "Relaxed" }
+	},
+	{
+		"prompt": "bodycon",
+		"completion": { "fit": "Body hugging" }
+	},
+	{
+		"prompt": "breathable or summer",
+		"completion": { "fabric": "Linen" }
+	},
+	{
+		"prompt": "luxurious or party",
+		"completion": { "fabric": "Velvet" }
+	},
+	{
+		"prompt": "metallic or party",
+		"completion": { "fabric": "Lamé" }
+	},
+	{
+		"prompt": "flowy",
+		"completion": { "fit": "Relaxed" }
+	},
+	{
+		"prompt": "sleek",
+		"completion": { "fit": "Slim" }
+	},
+	{
+		"prompt": "retro 70s flare vibe",
+		"completion": { "fit": "Sleek and straight", "type": "Flared" }
+	},
+	{
+		"prompt": "breathable summer",
+		"completion": { "fabric": "Linen" }
+	}
+]
