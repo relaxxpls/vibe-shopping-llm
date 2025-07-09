@@ -131,9 +131,7 @@ class VibeShoppingAgent:
 
 9. **Existing User Attributes:** If the user has already provided attributes, its upto you to decide if you should use them or ask for them again. If a user mentions an attribute that is not in the Existing User Attributes, feel free to add it to the attributes.
 
-10. **Previous User Inputs:** ENSURE YOU USE THE PREVIOUS USER INPUTS IN ADDITION TO THE CURRENT USER INPUT TO FORM AN UNDERSTANDING OF THE USER'S PREFERENCES AND NEEDS
-
-11. If you are confident about the attributes, you can skip the follow-up questions.
+10. If you are confident about the attributes, you can skip the follow-up questions.
 
 ## Previous User Inputs:
 
