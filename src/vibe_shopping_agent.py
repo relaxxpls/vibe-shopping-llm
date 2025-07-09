@@ -1,388 +1,291 @@
-import pandas as pd
+from typing import Dict, List, Optional, Any
 import json
-import re
-from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass
-from enum import Enum
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+from pydantic import BaseModel, Field
+from src.find_recommendations import OutfitRecommendationAgent
+from deepmerge import always_merger
 
 
-class ConversationState(Enum):
-    INITIAL = "initial"
-    FOLLOW_UP = "follow_up"
-    RECOMMENDATION = "recommendation"
+class AttributeExtraction(BaseModel):
+    """Model for extracted attributes from user input"""
+
+    attributes: Dict[str, Any] = Field(description="Extracted clothing attributes")
+    confidence: float = Field(description="Confidence score 0-1")
 
 
-@dataclass
-class ProductMatch:
-    product: Dict
-    match_score: float
-    matched_attributes: List[str]
+class FollowUpDecision(BaseModel):
+    """Model for follow-up decision"""
 
-
-MAX_FOLLOW_UPS = 2
+    needs_followup: bool = Field(description="Whether a follow-up question is needed")
+    question: Optional[str] = Field(description="Follow-up question if needed")
+    reasoning: str = Field(description="Reasoning for the decision")
 
 
 class VibeShoppingAgent:
-    def __init__(self, catalog_file: str = "data/Apparels_shared.xlsx"):
-        self.catalog = pd.read_excel(catalog_file)
-        self.state = ConversationState.INITIAL
-        self.conversation_history = []
-        self.inferred_attributes = {}
+    def __init__(self):
+        """Initialize the LLM-based vibe shopping agent"""
+        self.conversation = []
+        self.attributes = {}
         self.follow_up_count = 0
+        self.max_follow_ups = 2
+        self.recommendation_agent = OutfitRecommendationAgent()
 
-        # Load vibe-to-attribute mappings
-        self.vibe_mappings = self._load_vibe_mappings()
+        self.llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
 
-    def _load_vibe_mappings(self) -> Dict:
-        """Load and parse vibe-to-attribute mappings from the text file"""
-        mappings = {
-            # Occasion-based vibes
-            "brunch": {
-                "occasion": "Casual",
-                "fit": "Relaxed",
-                "fabric": ["Cotton", "Linen"],
-            },
-            "date night": {
-                "fit": "Body hugging",
-                "fabric": ["Satin", "Velvet", "Silk"],
-                "occasion": "Party",
-            },
-            "office": {
-                "fabric": "Cotton poplin",
-                "neckline": "Collar",
-                "fit": "Tailored",
-            },
-            "party": {
-                "fit": "Body hugging",
-                "fabric": ["Satin", "Silk"],
-                "occasion": "Party",
-            },
-            "garden party": {
-                "fit": "Relaxed",
-                "fabric": ["Chiffon", "Linen"],
-                "color_or_print": "Pastel floral",
-            },
-            "vacation": {"fit": "Relaxed", "fabric": "Linen", "occasion": "Vacation"},
-            "beach": {
-                "fit": "Relaxed",
-                "fabric": "Linen",
-                "color_or_print": "Seafoam green",
-            },
-            # Style-based vibes
-            "cute": {
-                "fit": "Relaxed",
-                "color_or_print": ["Pastel pink", "Pastel yellow", "Floral print"],
-            },
-            "elegant": {
-                "fit": "Tailored",
-                "fabric": ["Silk", "Satin"],
-                "color_or_print": "Off-white",
-            },
-            "casual": {"fit": "Relaxed", "fabric": ["Cotton", "Modal jersey"]},
-            "comfy": {"fit": "Relaxed", "fabric": "Modal jersey"},
-            "flowy": {"fit": "Relaxed"},
-            "bodycon": {"fit": "Body hugging"},
-            "retro": {
-                "fit": "Body hugging",
-                "fabric": "Stretch crepe",
-                "color_or_print": "Geometric print",
-            },
-            # Color/print vibes
-            "pastel": {"color_or_print": ["Pastel pink", "Pastel yellow"]},
-            "floral": {"color_or_print": ["Floral print", "Green floral"]},
-            "bold": {"color_or_print": ["Ruby red", "Cobalt blue", "Red"]},
-            "neutral": {
-                "color_or_print": ["Sand beige", "Off-white", "White", "Charcoal"]
-            },
-            # Fabric vibes
-            "breathable": {"fabric": "Linen"},
-            "luxurious": {"fabric": ["Velvet", "Silk", "Satin"]},
-            "summer": {"fabric": "Linen"},
-            "metallic": {"fabric": "Lamé"},
-        }
-        return mappings
+        # Initialize parsers
+        self.attribute_parser = JsonOutputParser(pydantic_object=AttributeExtraction)
+        self.followup_parser = JsonOutputParser(pydantic_object=FollowUpDecision)
 
-    def process_query(self, user_input: str) -> str:
-        """Main method to process user input and return appropriate response"""
-        self.conversation_history.append({"role": "user", "content": user_input})
+        # System prompts
+        self.attribute_extraction_prompt = ChatPromptTemplate.from_messages(
+            [
+                SystemMessage(
+                    content="""You are an expert fashion stylist. Extract clothing attributes by understanding the vibe and context.
 
-        if self.state == ConversationState.INITIAL:
-            return self._handle_initial_query(user_input)
-        elif self.state == ConversationState.FOLLOW_UP:
-            return self._handle_follow_up_response(user_input)
-        # else:
-        #     return self._handle_additional_query(user_input)
+EXTRACT THESE ATTRIBUTES when mentioned or implied:
+- category: "Dresses", "Tops", "Bottoms", "Outerwear", "Activewear"
+- occasion: "Casual", "Business", "Evening", "Date Night", "Active", "Travel"
+- fit: "Slim", "Regular", "Relaxed", "Oversized"
+- fabric: "Cotton", "Linen", "Silk", "Denim", "Knit", "Chiffon"
+- color: specific colors or "Neutral", "Bright", "Dark", "Pastels"
+- print: "Solid", "Floral", "Geometric", "Abstract", "Animal"
+- size: "XS", "S", "M", "L", "XL", etc.
+- budget: "Under $50", "$50-100", "$100-200", "Over $200"
+- style: "Bohemian", "Classic", "Trendy", "Minimalist", "Romantic"
 
-    def _handle_initial_query(self, query: str) -> str:
-        """Handle the initial vibe-based query"""
-        # Extract vibe keywords and map to attributes
-        self.inferred_attributes = self._extract_vibe_attributes(query)
+KEYWORD DETECTION RULES:
+1. SIZE: Look for "size", "XS", "S", "M", "L", "XL", "small", "medium", "large", "extra"
+2. BUDGET: Look for "$", "dollar", "budget", "under", "over", "between", price ranges
+3. OCCASION: "weekend" = "Casual", "work" = "Business", "dinner" = "Evening"
+4. FABRIC: "cozy" = "Knit", "flowy" = "Chiffon", "structured" = "Cotton"
 
-        # Determine what follow-up questions to ask
-        follow_up_questions = self._generate_follow_up_questions(
-            query, self.inferred_attributes
+VIBE INTERPRETATION EXAMPLES:
+- "Bali family vacation" → occasion: "Travel", "Casual"; fabric: "Cotton", "Linen"; fit: "Relaxed"; color: "Bright"
+- "cozy weekend vibes size M under 100 dollars" → occasion: "Casual"; fabric: "Knit"; fit: "Relaxed"; size: "M"; budget: "$50-100"
+- "Anniversary dinner" → occasion: "Evening", "Date Night"; style: "Romantic"; color: "Elegant"
+- "Work meeting" → occasion: "Business"; fit: "Regular"; style: "Classic"
+
+IMPORTANT: 
+- ALWAYS extract size if mentioned explicitly (e.g., "size M", "large", "XL")
+- ALWAYS extract budget if price/money is mentioned (e.g., "under $100", "50 dollars")
+- Interpret mood/vibe words into concrete attributes
+- Consider context clues (vacation → travel-friendly fabrics)
+- Set confidence based on how specific the input is
+
+You must respond with valid JSON that includes:
+- attributes: Dictionary of extracted clothing attributes
+- confidence: Float between 0-1 indicating confidence
+
+{format_instructions}"""
+                ),
+                HumanMessage(
+                    content="Extract attributes from this user input: {user_input}"
+                ),
+            ]
         )
 
-        if follow_up_questions and self.follow_up_count < self.max_follow_ups:
-            self.state = ConversationState.FOLLOW_UP
+        self.followup_prompt = ChatPromptTemplate.from_messages(
+            [
+                SystemMessage(
+                    content="""You are a fashion stylist deciding if you need more information from the customer.
+
+RULES:
+1. Maximum 2 follow-up questions total
+2. Only ask about missing key information
+3. Don't ask if the information is already available in current attributes
+
+PRIORITY ORDER (ask about the first missing item):
+1. Category - if unclear whether they want dresses, tops, bottoms
+2. Size - if not specified in attributes
+3. Budget - if no price range mentioned
+
+EXAMPLES:
+- If missing category: "Do you prefer dresses, or tops and bottoms?"
+- If missing size: "What size are you looking for?"
+- If missing budget: "What's your budget range?"
+
+WHEN NOT TO ASK:
+- If current attributes already include the information
+- If you already asked 2 questions
+- If the user gave very specific details
+
+You must respond with valid JSON containing:
+- needs_followup: Boolean indicating if follow-up is needed
+- question: String with the follow-up question (or null if not needed)
+- reasoning: String explaining your decision
+
+{format_instructions}"""
+                ),
+                HumanMessage(
+                    content="Analyze this request and current state:\n\nUser request: {user_input}\nCurrent attributes: {current_attributes}\nFollow-up count: {followup_count}\nPrevious questions: {previous_questions}\n\nDecide if you need to ask a follow-up question."
+                ),
+            ]
+        )
+
+    def process_query(self, user_input: str) -> None:
+        """Main method to process user input and return appropriate response"""
+        self.conversation.append({"role": "user", "content": user_input})
+        attributes_new = self._extract_attributes_llm(user_input)
+        self.attributes = always_merger.merge(self.attributes, attributes_new)
+
+        # Decide if follow-up is needed using LLM
+        followup_decision = self._decide_followup_llm(user_input, self.attributes)
+
+        if followup_decision.needs_followup:
             self.follow_up_count += 1
 
-            response = f"Great! I found some lovely options for '{query}'. "
-            response += f"To help me narrow down the perfect pieces for you, {follow_up_questions[0]}"
+            response = f"Great! I found some lovely options for '{user_input}'. "
+            response += f"To help me find the perfect pieces for you, {followup_decision.question}"
+
+            self.conversation.append({"role": "assistant", "content": response})
+            return
+
+        response = self._generate_recommendations()
+        self.conversation.append({"role": "assistant", "content": response})
+
+    def _extract_attributes_llm(self, user_input: str) -> Dict[str, Any]:
+        """Extract attributes from user input using LLM"""
+        try:
+            chain = self.attribute_extraction_prompt | self.llm | self.attribute_parser
+            result = chain.invoke(
+                {
+                    "user_input": user_input,
+                    "format_instructions": self.attribute_parser.get_format_instructions(),
+                }
+            )
+            extracted_attrs = result.get("attributes", {})
+            print(
+                f"🔍 Extracted attributes for '{user_input}': {json.dumps(extracted_attrs, indent=2)}"
+            )
+            return extracted_attrs
+        except Exception as e:
+            print(f"Error extracting attributes: {e}")
+            return {}
+
+    def _decide_followup_llm(
+        self, user_input: str, current_attributes: Dict
+    ) -> FollowUpDecision:
+        """Use LLM to decide if follow-up questions are needed"""
+        if self.follow_up_count >= self.max_follow_ups:
+            return FollowUpDecision(
+                needs_followup=False, question=None, reasoning="Max follow-ups reached"
+            )
+
+        previous_questions = [
+            message["content"]
+            for message in self.conversation
+            if message["role"] == "user"
+        ]
+        print(f"Previous questions: {previous_questions}")
+        print(
+            f"🔍 Current attributes being passed to LLM: {json.dumps(current_attributes, indent=2)}"
+        )
+
+        try:
+            chain = self.followup_prompt | self.llm | self.followup_parser
+            result = chain.invoke(
+                {
+                    "user_input": user_input,
+                    "current_attributes": json.dumps(current_attributes),
+                    "followup_count": self.follow_up_count,
+                    "previous_questions": json.dumps(previous_questions),
+                    "format_instructions": self.followup_parser.get_format_instructions(),
+                }
+            )
+            decision = FollowUpDecision(**result)
+            print(
+                f"🤔 Follow-up decision: needs_followup={decision.needs_followup}, question='{decision.question}', reasoning='{decision.reasoning}'"
+            )
+            return decision
+        except Exception as e:
+            print(f"Error in follow-up decision: {e}")
+            return FollowUpDecision(
+                needs_followup=False, question=None, reasoning="Error in processing"
+            )
+
+    def _generate_recommendations(self) -> str:
+        """Generate product recommendations using the recommendation agent"""
+        try:
+            matches = self.recommendation_agent.find_recommendations(self.attributes)
+
+            if not matches:
+                return "I couldn't find any matches for your preferences. Would you like to try a different style or adjust your requirements?"
+
+            # Get top 3 recommendations
+            top_matches = matches[:3]
+
+            # Generate response with LLM-enhanced justifications
+            response = "Here are my top picks for you:\n\n"
+
+            for i, match in enumerate(top_matches, 1):
+                product = match.product_details
+                response += f"{i}. **{product['name']}** (${product['price']})\n"
+                response += f"   {self._generate_justification_llm(product, match.matched_attributes)}\n\n"
+
+            if len(matches) > 3:
+                response += "Would you like to see more options?"
 
             return response
-        else:
-            # Skip follow-ups and go straight to recommendations
-            return self._generate_recommendations()
 
-    def _handle_follow_up_response(self, response: str) -> str:
-        """Handle user's response to follow-up questions"""
-        # Extract additional attributes from follow-up response
-        additional_attributes = self._extract_vibe_attributes(response)
+        except ValueError as e:
+            return str(e)
+        except Exception as e:
+            return f"I encountered an error finding recommendations: {str(e)}"
 
-        # Merge with existing inferred attributes
-        for key, value in additional_attributes.items():
-            if key in self.inferred_attributes:
-                # Combine values if both exist
-                if isinstance(self.inferred_attributes[key], list):
-                    if isinstance(value, list):
-                        self.inferred_attributes[key].extend(value)
-                    else:
-                        self.inferred_attributes[key].append(value)
-                else:
-                    if isinstance(value, list):
-                        self.inferred_attributes[key] = [
-                            self.inferred_attributes[key]
-                        ] + value
-                    else:
-                        self.inferred_attributes[key] = [
-                            self.inferred_attributes[key],
-                            value,
-                        ]
-            else:
-                self.inferred_attributes[key] = value
-
-        # Check if we need another follow-up
-        if self.follow_up_count < self.max_follow_ups:
-            follow_up_questions = self._generate_follow_up_questions(
-                "", self.inferred_attributes
-            )
-            if follow_up_questions:
-                self.follow_up_count += 1
-                return f"Perfect! {follow_up_questions[0]}"
-
-        # Generate recommendations
-        self.state = ConversationState.RECOMMENDATION
-        return self._generate_recommendations()
-
-    # def _handle_additional_query(self, query: str) -> str:
-    #     """Handle additional queries after recommendations"""
-    #     if "show me more" in query.lower() or "other options" in query.lower():
-    #         return self._generate_recommendations(offset=3)
-    #     elif "different" in query.lower() or "something else" in query.lower():
-    #         # Reset and start over
-    #         self.state = ConversationState.INITIAL
-    #         self.inferred_attributes = {}
-    #         self.follow_up_count = 0
-    #         return self._handle_initial_query(query)
-    #     else:
-    #         return "I'd be happy to help you find something else! What vibe are you going for?"
-
-    def _extract_vibe_attributes(self, text: str) -> Dict:
-        """Extract attributes from vibe-based text using keyword matching"""
-        text_lower = text.lower()
-        extracted_attributes = {}
-
-        for vibe, attributes in self.vibe_mappings.items():
-            if vibe in text_lower:
-                for attr_key, attr_value in attributes.items():
-                    if attr_key in extracted_attributes:
-                        # Combine values
-                        if isinstance(extracted_attributes[attr_key], list):
-                            if isinstance(attr_value, list):
-                                extracted_attributes[attr_key].extend(attr_value)
-                            else:
-                                extracted_attributes[attr_key].append(attr_value)
-                        else:
-                            if isinstance(attr_value, list):
-                                extracted_attributes[attr_key] = [
-                                    extracted_attributes[attr_key]
-                                ] + attr_value
-                            else:
-                                extracted_attributes[attr_key] = [
-                                    extracted_attributes[attr_key],
-                                    attr_value,
-                                ]
-                    else:
-                        extracted_attributes[attr_key] = attr_value
-
-        return extracted_attributes
-
-    def _generate_follow_up_questions(
-        self, original_query: str, current_attributes: Dict
-    ) -> List[str]:
-        """Generate targeted follow-up questions based on missing key attributes"""
-        questions = []
-
-        # Check what's missing and ask relevant questions
-        if "occasion" not in current_attributes:
-            if "work" in original_query.lower() or "office" in original_query.lower():
-                questions.append(
-                    "are you looking for something more formal or business casual?"
-                )
-            elif "party" in original_query.lower() or "night" in original_query.lower():
-                questions.append(
-                    "is this for a casual get-together or a more formal event?"
-                )
-            else:
-                questions.append(
-                    "what's the occasion - is this for work, weekend, or a special event?"
-                )
-
-        elif "fit" not in current_attributes:
-            questions.append(
-                "do you prefer a more relaxed, flowy fit or something more fitted and structured?"
-            )
-
-        elif "color_or_print" not in current_attributes:
-            questions.append(
-                "are you drawn to any particular colors or prints - maybe something bold, neutral, or pastel?"
-            )
-
-        elif "fabric" not in current_attributes:
-            questions.append(
-                "any fabric preferences - something breathable like linen, luxurious like silk, or cozy like cotton?"
-            )
-
-        return questions[:1]  # Return only the first question to avoid overwhelming
-
-    def _generate_recommendations(self, offset: int = 0) -> str:
-        """Generate product recommendations based on inferred attributes"""
-        # Find matching products
-        matches = self._find_matching_products(self.inferred_attributes)
-
-        if not matches:
-            return "I couldn't find exact matches for your vibe, but let me suggest some versatile pieces that might work! Would you like to try a different search?"
-
-        # Get top 3 recommendations (with offset for "show more")
-        top_matches = matches[offset : offset + 3]
-
-        if not top_matches:
-            return "Those were all my best suggestions! Would you like to try a different vibe or search?"
-
-        # Generate response with justification
-        response = "Here are my top picks for you:\n\n"
-
-        for i, match in enumerate(top_matches, 1):
-            product = match.product
-            response += f"{i}. **{product['name']}** (${product['price']})\n"
-            response += f"   {self._generate_justification(product, match.matched_attributes)}\n\n"
-
-        if len(matches) > offset + 3:
-            response += "Would you like to see more options?"
-
-        return response
-
-    def _find_matching_products(self, target_attributes: Dict) -> List[ProductMatch]:
-        """Find products that match the target attributes"""
-        matches = []
-
-        for _, product in self.catalog.iterrows():
-            match_score = 0
-            matched_attributes = []
-
-            for attr_key, attr_value in target_attributes.items():
-                if attr_key in product and pd.notna(product[attr_key]):
-                    product_value = str(product[attr_key]).lower()
-
-                    if isinstance(attr_value, list):
-                        # Check if any of the target values match
-                        for target_val in attr_value:
-                            if str(target_val).lower() in product_value:
-                                match_score += 1
-                                matched_attributes.append(f"{attr_key}: {target_val}")
-                                break
-                    else:
-                        if str(attr_value).lower() in product_value:
-                            match_score += 1
-                            matched_attributes.append(f"{attr_key}: {attr_value}")
-
-            if match_score > 0:
-                matches.append(
-                    ProductMatch(
-                        product=product.to_dict(),
-                        match_score=match_score,
-                        matched_attributes=matched_attributes,
-                    )
-                )
-
-        # Sort by match score (descending)
-        matches.sort(key=lambda x: x.match_score, reverse=True)
-        return matches
-
-    def _generate_justification(
+    def _generate_justification_llm(
         self, product: Dict, matched_attributes: List[str]
     ) -> str:
-        """Generate a justification for why this product matches the user's vibe"""
-        justifications = []
+        """Generate LLM-based justification for product recommendations"""
+        try:
+            justification_prompt = ChatPromptTemplate.from_messages(
+                [
+                    SystemMessage(
+                        content="""You are a fashion stylist explaining why a product matches a customer's request.
+                Create a brief, enthusiastic justification (1-2 sentences) that highlights the key features that make this item perfect for them.
+                Focus on the matched attributes and make it personal and engaging."""
+                    ),
+                    HumanMessage(
+                        content="Product: {product}\nMatched attributes: {matched_attributes}\nCustomer's style preferences: {customer_attributes}"
+                    ),
+                ]
+            )
 
-        # Create justification based on matched attributes
-        if any("fit" in attr for attr in matched_attributes):
-            fit = product.get("fit", "")
-            if "relaxed" in fit.lower():
-                justifications.append("perfect for a comfortable, effortless look")
-            elif "body hugging" in fit.lower():
-                justifications.append("gives you that flattering, fitted silhouette")
-            elif "tailored" in fit.lower():
-                justifications.append("offers a polished, structured appearance")
+            chain = justification_prompt | self.llm
+            result = chain.invoke(
+                {
+                    "product": json.dumps(product),
+                    "matched_attributes": ", ".join(matched_attributes),
+                    "customer_attributes": json.dumps(self.attributes),
+                }
+            )
 
-        if any("fabric" in attr for attr in matched_attributes):
-            fabric = product.get("fabric", "")
-            if "linen" in fabric.lower():
-                justifications.append(
-                    "the breathable linen keeps you cool and comfortable"
-                )
-            elif "silk" in fabric.lower():
-                justifications.append("luxurious silk adds elegant sophistication")
-            elif "satin" in fabric.lower():
-                justifications.append("smooth satin creates a glamorous finish")
+            return result.content.strip()
 
-        if any("color_or_print" in attr for attr in matched_attributes):
-            color = product.get("color_or_print", "")
-            if "pastel" in color.lower():
-                justifications.append(
-                    "the soft pastel tone is perfectly sweet and feminine"
-                )
-            elif "floral" in color.lower():
-                justifications.append(
-                    "the floral print adds a romantic, garden-party vibe"
-                )
-            elif "blue" in color.lower():
-                justifications.append(
-                    "the beautiful blue shade is both versatile and striking"
-                )
+        except Exception as e:
+            print(f"Error generating justification: {e}")
+            return f"A versatile {product.get('category', 'piece')} that matches your style perfectly."
 
-        if justifications:
-            return " - " + ", and ".join(justifications) + "."
-        else:
-            return f" - a versatile {product.get('category', 'piece')} that matches your style perfectly."
-
-    def reset_conversation(self):
+    def reset_conversation(self) -> None:
         """Reset the conversation state"""
-        self.state = ConversationState.INITIAL
-        self.conversation_history = []
-        self.inferred_attributes = {}
+        self.conversation = []
+        self.attributes = {}
         self.follow_up_count = 0
 
 
-# Example usage and testing
+# Example usage
 if __name__ == "__main__":
+    # Make sure to set your OpenAI API key
+    # export OPENAI_API_KEY="your-api-key-here"
+
     agent = VibeShoppingAgent()
 
+    print("🛍️ Welcome to your AI-powered personal styling assistant!")
     print(
-        "🛍️ Welcome to your personal styling assistant! Tell me what vibe you're going for."
+        "Tell me what vibe you're going for and I'll help you find the perfect pieces.\n"
     )
-    print("Example: 'something cute for brunch' or 'elegant date night outfit'\n")
 
     while True:
         user_input = input("You: ").strip()
@@ -396,5 +299,9 @@ if __name__ == "__main__":
             print("🔄 Starting fresh! What vibe are you going for?")
             continue
 
-        response = agent.process_query(user_input)
-        print(f"\nStylist: {response}\n")
+        try:
+            response = agent.process_query(user_input)
+            print(f"\nStylist: {response}\n")
+        except Exception as e:
+            print(f"Sorry, I encountered an error: {e}")
+            print("Please try again or type 'reset' to start over.\n")

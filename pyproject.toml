@@ -1,0 +1,37 @@
+[tool.poetry]
+authors = ["Laxman Desai <desai.laxman2001@gmail.com>"]
+description = "An AI-powered shopping assistant that understands your vibe and recommends clothing"
+name = "vibe-shopping-assistant"
+packages = [{ include = "src" }]
+readme = "README.md"
+version = "0.1.0"
+
+[tool.poetry.dependencies]
+deepmerge = "^2.0"
+langchain = "^0.3.26"
+langchain-core = "^0.3.68"
+langchain-openai = "^0.3.27"
+numpy = "^2.3.1"
+openai = "^1.93.1"
+openpyxl = "^3.1.5"
+pandas = "^2.3.0"
+pydantic = "^2.11.7"
+python = "^3.12"
+scikit-learn = "^1.7.0"
+sentence-transformers = "^5.0.0"
+streamlit = "^1.46.1"
+torch = "^2.7.1"
+transformers = "^4.53.1"
+watchdog = "^6.0.0"
+
+[tool.poetry.group.dev.dependencies]
+black = "^25.1.0"
+flake8 = "^7.3.0"
+pytest = "^8.4.1"
+
+[build-system]
+build-backend = "poetry.core.masonry.api"
+requires = ["poetry-core"]
+
+[tool.poetry.scripts]
+start = "app:start_streamlit"

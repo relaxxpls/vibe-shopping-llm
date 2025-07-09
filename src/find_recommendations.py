@@ -84,6 +84,7 @@ class EmbeddingBasedMatcher(MatchingStrategy):
                 parts.append(f"{key}: {', '.join(map(str, value))}")
             else:
                 parts.append(f"{key}: {value}")
+
         return "; ".join(parts)
 
     def _product_to_text(self, product: pd.Series) -> str:
@@ -103,6 +104,13 @@ class EmbeddingBasedMatcher(MatchingStrategy):
         for attr in relevant_attrs:
             if attr in product and pd.notna(product[attr]):
                 parts.append(f"{attr}: {product[attr]}")
+
+        # Add product name and description for better context
+        if "name" in product and pd.notna(product["name"]):
+            parts.append(f"name: {product['name']}")
+
+        if "description" in product and pd.notna(product["description"]):
+            parts.append(f"description: {product['description']}")
 
         return "; ".join(parts)
 
@@ -124,25 +132,3 @@ class OutfitRecommendationAgent:
             )
 
         return results[:max_results]
-
-    def explain_recommendation(self, result: RecommendationResult) -> str:
-        """Provide detailed explanation for a recommendation"""
-        explanation = f"""
-RECOMMENDATION: {result.product_name}
-Match Score: {result.match_score:.3f}
-Strategy: {result.matching_strategy}
-
-PRODUCT DETAILS:
-- Category: {result.product_details.get('category', 'N/A')}
-- Fit: {result.product_details.get('fit', 'N/A')}
-- Fabric: {result.product_details.get('fabric', 'N/A')}
-- Color/Print: {result.product_details.get('color_or_print', 'N/A')}
-- Price: ${result.product_details.get('price', 'N/A')}
-
-MATCHING ATTRIBUTES:
-{chr(10).join(f'- {attr}' for attr in result.matched_attributes)}
-
-REASONING:
-{result.reasoning}
-"""
-        return explanation.strip()

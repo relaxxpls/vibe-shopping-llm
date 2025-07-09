@@ -55,9 +55,9 @@ def main():
             st.rerun()
 
         # Display current inferred attributes
-        if st.session_state.agent.inferred_attributes:
+        if st.session_state.agent.attributes:
             st.header("🎯 Inferred Style Attributes")
-            for attr, value in st.session_state.agent.inferred_attributes.items():
+            for attr, value in st.session_state.agent.attributes.items():
                 if isinstance(value, list):
                     st.write(
                         f"**{attr.replace('_', ' ').title()}:** {', '.join(map(str, value))}"
@@ -71,10 +71,10 @@ def main():
     # with col1:
 
     # Display conversation history
-    if st.session_state.agent.conversation_history:
+    if st.session_state.agent.conversation:
         st.header("💬 Conversation")
 
-        for message in st.session_state.agent.conversation_history:
+        for message in st.session_state.agent.conversation:
             with st.chat_message(message["role"]):
                 st.write(message["content"])
 
@@ -100,8 +100,12 @@ def main():
         del st.session_state.user_input
 
     if user_input:
-        # Get agent response
-        st.session_state.agent.process_query(user_input)
+        try:
+            # Get agent response
+            st.session_state.agent.process_query(user_input)
+        except Exception as e:
+            st.error(f"Sorry, I encountered an error: {str(e)}")
+            st.info("Please try again with a different query.")
 
         # Rerun to update the display
         st.rerun()
@@ -129,6 +133,14 @@ def main():
 
     #     except Exception as e:
     #         st.error(f"Error loading catalog stats: {e}")
+
+
+def start_streamlit():
+    """Entry point for poetry start command"""
+    import subprocess
+    import sys
+
+    subprocess.run([sys.executable, "-m", "streamlit", "run", "app.py"])
 
 
 if __name__ == "__main__":
