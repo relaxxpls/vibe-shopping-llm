@@ -42,6 +42,8 @@ class EmbeddingBasedMatcher(MatchingStrategy):
             "fit": 1.2,
             "color_or_print": 1.1,
             "fabric": 1.0,
+            "budget_min": 1.0,
+            "budget_max": 1.0,
             "sleeve_length": 0.8,
             "neckline": 0.8,
             "length": 0.8,
@@ -54,9 +56,16 @@ class EmbeddingBasedMatcher(MatchingStrategy):
         completion_text, confidence_scores = self._extract_completion_data(completion)
         avg_confidence = self._calculate_weighted_confidence(confidence_scores)
 
+        # Filter by budget range before embedding calculations
+        filtered_products = self._filter_by_budget(completion, products)
+
+        if filtered_products.empty:
+            return []
+
         # Generate embeddings
         product_texts = [
-            self._product_to_text(product) for _, product in products.iterrows()
+            self._product_to_text(product)
+            for _, product in filtered_products.iterrows()
         ]
         completion_embedding = self.model.encode([completion_text])
         product_embeddings = self.model.encode(product_texts)
@@ -65,7 +74,7 @@ class EmbeddingBasedMatcher(MatchingStrategy):
         similarities = cosine_similarity(completion_embedding, product_embeddings)[0]
 
         results = []
-        for i, (_, product) in enumerate(products.iterrows()):
+        for i, (_, product) in enumerate(filtered_products.iterrows()):
             base_similarity = similarities[i]
             confidence_weighted_score = base_similarity * avg_confidence
 
@@ -93,6 +102,56 @@ class EmbeddingBasedMatcher(MatchingStrategy):
             )
 
         return sorted(results, key=lambda x: x.match_score, reverse=True)
+
+    def _filter_by_budget(
+        self, completion: Dict, products: pd.DataFrame
+    ) -> pd.DataFrame:
+        """Filter products by budget range"""
+        if "budget_min" not in completion and "budget_max" not in completion:
+            return products
+
+        # Extract budget values
+        budget_min = None
+        budget_max = None
+
+        if "budget_min" in completion:
+            budget_min_values = completion["budget_min"]
+            if isinstance(budget_min_values, list) and budget_min_values:
+                # Get the first value with decent confidence
+                for item in budget_min_values:
+                    if isinstance(item, dict) and "value" in item:
+                        try:
+                            budget_min = float(item["value"])
+                            break
+                        except (ValueError, TypeError):
+                            continue
+
+        if "budget_max" in completion:
+            budget_max_values = completion["budget_max"]
+            if isinstance(budget_max_values, list) and budget_max_values:
+                # Get the first value with decent confidence
+                for item in budget_max_values:
+                    if isinstance(item, dict) and "value" in item:
+                        try:
+                            budget_max = float(item["value"])
+                            break
+                        except (ValueError, TypeError):
+                            continue
+
+        # Apply budget filtering
+        filtered_products = products.copy()
+
+        if budget_min is not None:
+            filtered_products = filtered_products[
+                filtered_products["price"] >= budget_min
+            ]
+
+        if budget_max is not None:
+            filtered_products = filtered_products[
+                filtered_products["price"] <= budget_max
+            ]
+
+        return filtered_products
 
     def _extract_completion_data(
         self, completion: Dict
@@ -225,12 +284,58 @@ class OutfitRecommendationAgent:
         """Find recommendations using confidence-weighted matching"""
         results = self.matcher.match(completion, self.catalog)
 
+        # Check if no results due to budget filtering
+        if not results:
+            # Check if budget filtering was applied
+            budget_min = None
+            budget_max = None
+
+            if "budget_min" in completion:
+                budget_min_values = completion["budget_min"]
+                if isinstance(budget_min_values, list) and budget_min_values:
+                    for item in budget_min_values:
+                        if isinstance(item, dict) and "value" in item:
+                            try:
+                                budget_min = float(item["value"])
+                                break
+                            except (ValueError, TypeError):
+                                continue
+
+            if "budget_max" in completion:
+                budget_max_values = completion["budget_max"]
+                if isinstance(budget_max_values, list) and budget_max_values:
+                    for item in budget_max_values:
+                        if isinstance(item, dict) and "value" in item:
+                            try:
+                                budget_max = float(item["value"])
+                                break
+                            except (ValueError, TypeError):
+                                continue
+
+            if budget_min is not None or budget_max is not None:
+                budget_str = ""
+                if budget_min is not None and budget_max is not None:
+                    budget_str = f"between ${budget_min} and ${budget_max}"
+                elif budget_max is not None:
+                    budget_str = f"under ${budget_max}"
+                elif budget_min is not None:
+                    budget_str = f"over ${budget_min}"
+
+                raise ValueError(
+                    f"I couldn't find any products within your budget range {budget_str}. "
+                    "Would you like to adjust your budget or try a different style?"
+                )
+            else:
+                raise ValueError(
+                    "I couldn't find exact matches for your vibe. Please start a new conversation."
+                )
+
         # Filter by confidence-weighted score
         results = [match for match in results if match.match_score > min_score]
 
         if not results:
             raise ValueError(
-                "I couldn't find exact matches for your vibe. Would you like to try a different search?"
+                "I couldn't find exact matches for your vibe. Please start a new conversation."
             )
 
         return results[:max_results]

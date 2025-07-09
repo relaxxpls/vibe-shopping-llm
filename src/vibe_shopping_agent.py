@@ -33,6 +33,8 @@ class ProductAttributes(BaseModel):
     neckline: List[AttributeValue]
     length: List[AttributeValue]
     pant_type: List[AttributeValue]
+    budget_min: List[AttributeValue]
+    budget_max: List[AttributeValue]
 
 
 class AttributeExtraction(BaseModel):
@@ -70,7 +72,7 @@ class VibeShoppingAgent:
 
 **category**: top, dress, skirt, pants
 
-**available_sizes**: XS,S,M,L,XL (or subsets like XS,S,M or S,M,L,XL)
+**available_sizes**: XS,S,M,L,XL (or subsets like XS,S,M or S,M,L,XL) - ONLY specify if explicitly mentioned by user, otherwise leave empty with confidence 0.0
 
 **fit**: Relaxed, Stretch to fit, Body hugging, Tailored, Flowy, Bodycon, Oversized, Sleek and straight, Slim
 
@@ -88,9 +90,13 @@ class VibeShoppingAgent:
 
 **pant_type**: Wide-legged, Ankle length, Flared, Wide hem, Straight ankle, Mid-rise, Low-rise
 
+**budget_min**: Minimum price range (e.g., 10, 20, 30, 50, 100)
+
+**budget_max**: Maximum price range (e.g., 50, 100, 150, 200, 300)
+
 ## Instructions:
 
-1. **Think step by step** about the vibe provided. Consider the mood, style, occasion, and any specific details mentioned.
+1. **Think step by step** about the vibe provided. Consider the mood, style, occasion, and any specific details mentioned. Prioritize occasion and category, if they are not clearly mentioned, prioritize asking for them in the follow-up questions.
 
 2. **Provide multiple suggestions** for each attribute when appropriate. Each attribute should be an array of options with confidence scores.
 
@@ -102,15 +108,36 @@ class VibeShoppingAgent:
 
 6. **Generate follow-up questions** for attributes with confidence < 0.5 to gather more specific information. Keep the follow-up questions short, targeted and not too specific. Try for follow-ups that answer multiple attributes at once yet seem like a single meaningful question.
 
-7. **Response format**: Return a JSON object with two main sections:
+7. **Size Handling**: NEVER assume all sizes are available. Only specify sizes if explicitly mentioned by the user. If no sizes are mentioned, leave available_sizes empty with confidence 0.0 and ask about it in follow-ups.
+    - If the user mentions a size, make sure to include it in the available_sizes array.
+    - Look for phrases like i'm skinny or tall or petite or plus size or small or medium and so on.
+
+8. **Response format**: Return a JSON object with two main sections:
    - `attributes`: All fields with their values and confidence scores as arrays
    - `follow_ups`: Precise questions to improve low-confidence attributes
 
-8. **Existing User Attributes:** If the user has already provided attributes, its upto you to decide if you should use them or ask for them again. If a user mentions an attribute that is not in the Existing User Attributes, feel free to add it to the attributes.
+9. **Budget Range Handling**: 
+   - CRITICAL: Always look for budget-related phrases and extract numeric values
+   - Extract budget information from phrases like:
+     * "under $50" → budget_max: 50
+     * "between $30 and $100" → budget_min: 30, budget_max: 100
+     * "from $30 to $100" → budget_min: 30, budget_max: 100
+     * "$30-$100" → budget_min: 30, budget_max: 100
+     * "around $75" → budget_max: 75
+     * "budget-friendly" → budget_max: 50
+     * "affordable" → budget_max: 60
+     * "luxury" → budget_min: 200
+     * "expensive" → budget_min: 150
+   - When a range is specified (e.g., "between X and Y"), ALWAYS extract BOTH values
+   - If only one budget value is mentioned, use it as budget_max
+   - If no budget is mentioned, leave budget_min and budget_max empty with confidence 0.0
+   - Budget values should be numeric without dollar signs (e.g., 50, 100, 200)
 
-9. **Previous User Inputs:** Use the previous user inputs to form an understanding of the user's preferences and needs. Ensure you don't ask the same question again.
+10. **Existing User Attributes:** If the user has already provided attributes, its upto you to decide if you should use them or ask for them again. If a user mentions an attribute that is not in the Existing User Attributes, feel free to add it to the attributes.
 
-10. If you are confident about the attributes, you can skip the follow-up questions.
+11. **Previous User Inputs:** Use the previous user inputs to form an understanding of the user's preferences and needs. Ensure you don't ask the same question again.
+
+12. If you are confident about the attributes, you can skip the follow-up questions.
 
 ## Previous User Inputs:
 
@@ -126,13 +153,13 @@ class VibeShoppingAgent:
 
 ## Example Input/Output:
 
-**Input**: "Cozy coffee shop vibes for a weekend brunch"
+**Input**: "Cozy coffee shop vibes for a weekend brunch between $30 and $75"
 **Output**: 
 ```json
 {
   "attributes": {
     "category": [{"value": "top", "confidence": 0.8}, {"value": "dress", "confidence": 0.6}],
-    "available_sizes": [{"value": "XS,S,M,L,XL", "confidence": 0.9}],
+    "available_sizes": [{"value": "", "confidence": 0.0}],
     "fit": [{"value": "Relaxed", "confidence": 0.9}, {"value": "Flowy", "confidence": 0.7}],
     "fabric": [{"value": "Cotton", "confidence": 0.7}, {"value": "Modal jersey", "confidence": 0.6}],
     "sleeve_length": [{"value": "Long sleeves", "confidence": 0.6}, {"value": "Short sleeves", "confidence": 0.5}],
@@ -140,10 +167,12 @@ class VibeShoppingAgent:
     "occasion": [{"value": "Everyday", "confidence": 0.8}],
     "neckline": [{"value": "Round neck", "confidence": 0.6}, {"value": "V neck", "confidence": 0.5}],
     "length": [{"value": "", "confidence": 0.0}],
-    "pant_type": [{"value": "", "confidence": 0.0}]
+    "pant_type": [{"value": "", "confidence": 0.0}],
+    "budget_min": [{"value": "30", "confidence": 0.9}],
+    "budget_max": [{"value": "75", "confidence": 0.9}]
   },
   "follow_ups": [
-    "What sleeve length do you prefer - short sleeves for warmer weather or long sleeves for a cozier feel?",
+    “Any must-haves like sleeveless, budget or size to keep in mind?”,
     "Any preferred colors or prints? Neutral tones, earth tones, or something more vibrant?",
     "What neckline style appeals to you - round neck, V neck, or something else?"
   ]
@@ -255,8 +284,8 @@ class VibeShoppingAgent:
                 response += f"{i}. **{product['name']}** (${product['price']})\n"
                 response += f"   {self._generate_justification_llm(product, match.matched_attributes)}\n\n"
 
-            if len(matches) > 3:
-                response += "Would you like to see more options?"
+            # if len(matches) > 3:
+            #     response += "Would you like to see more options?"
 
             return response
 
