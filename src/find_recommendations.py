@@ -1,10 +1,10 @@
 import pandas as pd
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.preprocessing import MinMaxScaler
+import numpy as np
 
 
 @dataclass
@@ -17,7 +17,7 @@ class RecommendationResult:
     matched_attributes: List[str]
     product_details: Dict
     reasoning: str
-    matching_strategy: str
+    confidence_breakdown: Dict[str, float]
 
 
 class MatchingStrategy(ABC):
@@ -31,61 +31,161 @@ class MatchingStrategy(ABC):
 
 
 class EmbeddingBasedMatcher(MatchingStrategy):
-    """Embedding-based matching using sentence transformers"""
+    """Confidence-weighted embedding-based matching"""
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         self.model = SentenceTransformer(model_name)
-        self.scaler = MinMaxScaler()
+        # Attribute importance weights
+        self.attribute_weights = {
+            "occasion": 1.5,
+            "category": 1.3,
+            "fit": 1.2,
+            "color_or_print": 1.1,
+            "fabric": 1.0,
+            "sleeve_length": 0.8,
+            "neckline": 0.8,
+            "length": 0.8,
+        }
 
     def match(
         self, completion: Dict, products: pd.DataFrame
     ) -> List[RecommendationResult]:
-        """Match products using embedding similarity"""
-        # Create text representation of completion
-        completion_text = self._dict_to_text(completion)
-
-        # Create text representations of products
-        product_texts = []
-        for _, product in products.iterrows():
-            product_text = self._product_to_text(product)
-            product_texts.append(product_text)
+        """Match products using confidence-weighted embedding similarity"""
+        completion_text, confidence_scores = self._extract_completion_data(completion)
+        avg_confidence = self._calculate_weighted_confidence(confidence_scores)
 
         # Generate embeddings
+        product_texts = [
+            self._product_to_text(product) for _, product in products.iterrows()
+        ]
         completion_embedding = self.model.encode([completion_text])
         product_embeddings = self.model.encode(product_texts)
 
-        # Calculate similarities
+        # Calculate confidence-weighted similarities
         similarities = cosine_similarity(completion_embedding, product_embeddings)[0]
 
-        # Create results
         results = []
         for i, (_, product) in enumerate(products.iterrows()):
-            similarity = similarities[i]
+            base_similarity = similarities[i]
+            confidence_weighted_score = base_similarity * avg_confidence
+
+            matched_attrs, confidence_breakdown = self._get_matched_attributes(
+                completion, product, confidence_scores
+            )
+
+            reasoning = self._build_reasoning(
+                base_similarity,
+                avg_confidence,
+                confidence_weighted_score,
+                confidence_breakdown,
+            )
 
             results.append(
                 RecommendationResult(
                     product_id=product["id"],
                     product_name=product["name"],
-                    match_score=similarity,
-                    matched_attributes=[f"embedding_similarity: {similarity:.3f}"],
+                    match_score=confidence_weighted_score,
+                    matched_attributes=matched_attrs,
                     product_details=product.to_dict(),
-                    reasoning=f"Embedding similarity: {similarity:.3f} - semantic match based on overall style attributes",
-                    matching_strategy="embedding_based",
+                    reasoning=reasoning,
+                    confidence_breakdown=confidence_breakdown,
                 )
             )
 
         return sorted(results, key=lambda x: x.match_score, reverse=True)
 
-    def _dict_to_text(self, d: Dict) -> str:
-        """Convert completion dictionary to text"""
+    def _extract_completion_data(
+        self, completion: Dict
+    ) -> Tuple[str, Dict[str, float]]:
+        """Extract completion text and confidence scores"""
         parts = []
-        for key, value in d.items():
+        confidence_scores = {}
+
+        for key, value in completion.items():
             if isinstance(value, list):
-                parts.append(f"{key}: {', '.join(map(str, value))}")
+                values = []
+                confidences = []
+
+                for item in value:
+                    if isinstance(item, dict) and "value" in item:
+                        values.append(item["value"])
+                        confidences.append(float(item.get("confidence", 1.0)))
+                    else:
+                        values.append(str(item))
+                        confidences.append(1.0)
+
+                parts.append(f"{key}: {', '.join(values)}")
+                confidence_scores[key] = np.mean(confidences) if confidences else 1.0
             else:
                 parts.append(f"{key}: {value}")
+                confidence_scores[key] = 1.0
 
-        return "; ".join(parts)
+        return "; ".join(parts), confidence_scores
+
+    def _calculate_weighted_confidence(
+        self, confidence_scores: Dict[str, float]
+    ) -> float:
+        """Calculate weighted average confidence across all attributes"""
+        if not confidence_scores:
+            return 1.0
+
+        weighted_sum = 0
+        total_weight = 0
+
+        for attr, confidence in confidence_scores.items():
+            weight = self.attribute_weights.get(attr, 1.0)
+            weighted_sum += confidence * weight
+            total_weight += weight
+
+        return weighted_sum / total_weight if total_weight > 0 else 1.0
+
+    def _get_matched_attributes(
+        self, completion: Dict, product: pd.Series, confidence_scores: Dict[str, float]
+    ) -> Tuple[List[str], Dict[str, float]]:
+        """Get matched attributes with their confidence scores"""
+        matched_attrs = []
+        confidence_breakdown = {}
+
+        for attr, confidence in confidence_scores.items():
+            if attr in product and pd.notna(product[attr]):
+                matched_attrs.append(f"{attr}: {confidence:.3f}")
+                confidence_breakdown[attr] = confidence
+
+        return matched_attrs, confidence_breakdown
+
+    def _build_reasoning(
+        self,
+        base_similarity: float,
+        avg_confidence: float,
+        weighted_score: float,
+        confidence_breakdown: Dict[str, float],
+    ) -> str:
+        """Build reasoning string with confidence information"""
+        reasoning_parts = [
+            f"Similarity: {base_similarity:.3f}",
+            f"Confidence: {avg_confidence:.3f}",
+            f"Final Score: {weighted_score:.3f}",
+        ]
+
+        if confidence_breakdown:
+            high_conf = [
+                attr for attr, conf in confidence_breakdown.items() if conf > 0.8
+            ]
+            medium_conf = [
+                attr for attr, conf in confidence_breakdown.items() if 0.5 < conf <= 0.8
+            ]
+            low_conf = [
+                attr for attr, conf in confidence_breakdown.items() if conf <= 0.5
+            ]
+
+            if high_conf:
+                reasoning_parts.append(f"High confidence: {', '.join(high_conf)}")
+            if medium_conf:
+                reasoning_parts.append(f"Medium confidence: {', '.join(medium_conf)}")
+            if low_conf:
+                reasoning_parts.append(f"Low confidence: {', '.join(low_conf)}")
+
+        return " | ".join(reasoning_parts)
 
     def _product_to_text(self, product: pd.Series) -> str:
         """Convert product to text representation"""
@@ -99,16 +199,15 @@ class EmbeddingBasedMatcher(MatchingStrategy):
             "length",
             "category",
         ]
-        parts = []
 
+        parts = []
         for attr in relevant_attrs:
             if attr in product and pd.notna(product[attr]):
                 parts.append(f"{attr}: {product[attr]}")
 
-        # Add product name and description for better context
+        # Add product name and description
         if "name" in product and pd.notna(product["name"]):
             parts.append(f"name: {product['name']}")
-
         if "description" in product and pd.notna(product["description"]):
             parts.append(f"description: {product['description']}")
 
@@ -123,9 +222,12 @@ class OutfitRecommendationAgent:
     def find_recommendations(
         self, completion: Dict, min_score: float = 0.3, max_results: int = 10
     ) -> List[RecommendationResult]:
+        """Find recommendations using confidence-weighted matching"""
         results = self.matcher.match(completion, self.catalog)
-        # Filter out very low similarity scores (below 0.3)
+
+        # Filter by confidence-weighted score
         results = [match for match in results if match.match_score > min_score]
+
         if not results:
             raise ValueError(
                 "I couldn't find exact matches for your vibe. Would you like to try a different search?"

@@ -21,6 +21,23 @@ def main():
 
     # Sidebar with examples and info
     with st.sidebar:
+        if st.button("🔄 Start New Conversation", use_container_width=True):
+            st.session_state.agent.reset_conversation()
+            st.rerun()
+
+        # Display current inferred attributes
+        if st.session_state.agent.attributes:
+            st.header("🎯 Inferred Style Attributes")
+            for attr, value in st.session_state.agent.attributes.items():
+                if isinstance(value, list):
+                    st.write(
+                        f"**{attr.replace('_', ' ').title()}:** {', '.join(map(str, value))}"
+                    )
+                else:
+                    st.write(f"**{attr.replace('_', ' ').title()}:** {value}")
+
+        st.divider()
+
         st.header("✨ How it works")
         st.markdown(
             """
@@ -47,23 +64,6 @@ def main():
             ):
                 st.session_state.user_input = query
                 st.rerun()
-
-        st.divider()
-
-        if st.button("🔄 Start New Conversation", use_container_width=True):
-            st.session_state.agent.reset_conversation()
-            st.rerun()
-
-        # Display current inferred attributes
-        if st.session_state.agent.attributes:
-            st.header("🎯 Inferred Style Attributes")
-            for attr, value in st.session_state.agent.attributes.items():
-                if isinstance(value, list):
-                    st.write(
-                        f"**{attr.replace('_', ' ').title()}:** {', '.join(map(str, value))}"
-                    )
-                else:
-                    st.write(f"**{attr.replace('_', ' ').title()}:** {value}")
 
     # Main conversation area
     # col1, col2 = st.columns([3, 1])
