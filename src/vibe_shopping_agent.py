@@ -72,7 +72,7 @@ class VibeShoppingAgent:
 
 **category**: top, dress, skirt, pants
 
-**available_sizes**: XS,S,M,L,XL (or subsets like XS,S,M or S,M,L,XL) - ONLY specify if explicitly mentioned by user, otherwise leave empty with confidence 0.0
+**available_sizes**: XS,S,M,L,XL (or subsets like XS,S,M or S,M,L,XL)
 
 **fit**: Relaxed, Stretch to fit, Body hugging, Tailored, Flowy, Bodycon, Oversized, Sleek and straight, Slim
 
@@ -96,7 +96,7 @@ class VibeShoppingAgent:
 
 ## Instructions:
 
-1. **Think step by step** about the vibe provided. Consider the mood, style, occasion, and any specific details mentioned. Prioritize occasion and category, if they are not clearly mentioned, prioritize asking for them in the follow-up questions.
+1. **Think step by step** about the vibe provided. Consider the mood, style, occasion, and any specific details mentioned. Ensure you understand the occasion and category, if they are not clearly mentioned, prioritize asking for them in the follow-up questions.
 
 2. **Provide multiple suggestions** for each attribute when appropriate. Each attribute should be an array of options with confidence scores.
 
@@ -108,15 +108,11 @@ class VibeShoppingAgent:
 
 6. **Generate follow-up questions** for attributes with confidence < 0.5 to gather more specific information. Keep the follow-up questions short, targeted and not too specific. Try for follow-ups that answer multiple attributes at once yet seem like a single meaningful question.
 
-7. **Size Handling**: NEVER assume all sizes are available. Only specify sizes if explicitly mentioned by the user. If no sizes are mentioned, leave available_sizes empty with confidence 0.0 and ask about it in follow-ups.
-    - If the user mentions a size, make sure to include it in the available_sizes array.
-    - Look for phrases like i'm skinny or tall or petite or plus size or small or medium and so on.
-
-8. **Response format**: Return a JSON object with two main sections:
+7. **Response format**: Return a JSON object with two main sections:
    - `attributes`: All fields with their values and confidence scores as arrays
    - `follow_ups`: Precise questions to improve low-confidence attributes
 
-9. **Budget Range Handling**: 
+8. **Budget Range Handling**: 
    - CRITICAL: Always look for budget-related phrases and extract numeric values
    - Extract budget information from phrases like:
      * "under $50" → budget_max: 50
@@ -133,11 +129,11 @@ class VibeShoppingAgent:
    - If no budget is mentioned, leave budget_min and budget_max empty with confidence 0.0
    - Budget values should be numeric without dollar signs (e.g., 50, 100, 200)
 
-10. **Existing User Attributes:** If the user has already provided attributes, its upto you to decide if you should use them or ask for them again. If a user mentions an attribute that is not in the Existing User Attributes, feel free to add it to the attributes.
+9. **Existing User Attributes:** If the user has already provided attributes, its upto you to decide if you should use them or ask for them again. If a user mentions an attribute that is not in the Existing User Attributes, feel free to add it to the attributes.
 
-11. **Previous User Inputs:** Use the previous user inputs to form an understanding of the user's preferences and needs. Ensure you don't ask the same question again.
+10. **Previous User Inputs:** ENSURE YOU USE THE PREVIOUS USER INPUTS IN ADDITION TO THE CURRENT USER INPUT TO FORM AN UNDERSTANDING OF THE USER'S PREFERENCES AND NEEDS
 
-12. If you are confident about the attributes, you can skip the follow-up questions.
+11. If you are confident about the attributes, you can skip the follow-up questions.
 
 ## Previous User Inputs:
 

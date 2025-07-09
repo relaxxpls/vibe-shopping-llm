@@ -100,12 +100,19 @@ def main():
         del st.session_state.user_input
 
     if user_input:
-        try:
-            # Get agent response
-            st.session_state.agent.process_query(user_input)
-        except Exception as e:
-            st.error(f"Sorry, I encountered an error: {str(e)}")
-            st.info("Please try again with a different query.")
+        # Immediately display the user's message
+        with st.chat_message("user"):
+            st.write(user_input)
+
+        # Show loading indicator while processing
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking about your perfect style..."):
+                try:
+                    # Get agent response
+                    st.session_state.agent.process_query(user_input)
+                except Exception as e:
+                    st.error(f"Sorry, I encountered an error: {str(e)}")
+                    st.info("Please try again with a different query.")
 
         # Rerun to update the display
         st.rerun()
