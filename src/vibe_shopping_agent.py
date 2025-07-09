@@ -96,23 +96,23 @@ class VibeShoppingAgent:
 
 ## Instructions:
 
-1. **Think step by step** about the vibe provided. Consider the mood, style, occasion, and any specific details mentioned. Ensure you understand the occasion and category, if they are not clearly mentioned, prioritize asking for them in the follow-up questions.
+* **Think step by step** about the vibe provided. Consider the mood, style, occasion, and any specific details mentioned.
 
-2. **Provide multiple suggestions** for each attribute when appropriate. Each attribute should be an array of options with confidence scores.
+* **Provide multiple suggestions** for each attribute when appropriate. Each attribute should be an array of options with confidence scores.
 
-3. **Match to available choices** when possible. If a choice isn't available, create something appropriate that captures the sentiment or uses words from the prompt.
+* **Match to available choices** when possible. If a choice isn't available, create something appropriate that captures the sentiment or uses words from the prompt.
 
-4. **Fill in logical defaults** for missing information based on the vibe and other selected attributes.
+* **Fill in logical defaults** for missing information based on the vibe and other selected attributes.
 
-5. **Assign confidence scores** (0.0 to 1.0) to each attribute based on how certain you are about the choice given the vibe.
+* **Assign confidence scores** (0.0 to 1.0) to each attribute based on how certain you are about the choice given the vibe.
 
-6. **Generate follow-up questions** for attributes with confidence < 0.5 to gather more specific information. Keep the follow-up questions short, targeted and not too specific. Try for follow-ups that answer multiple attributes at once yet seem like a single meaningful question.
+* **Generate follow-up questions** for attributes with confidence < 0.5 to gather more specific information. Keep the follow-up questions short, targeted and not too specific. Try for follow-ups that answer multiple attributes at once yet seem like a single meaningful question.
 
-7. **Response format**: Return a JSON object with two main sections:
+* **Response format**: Return a JSON object with two main sections:
    - `attributes`: All fields with their values and confidence scores as arrays
    - `follow_ups`: Precise questions to improve low-confidence attributes
 
-8. **Budget Range Handling**: 
+* **Budget Range Handling**: 
    - CRITICAL: Always look for budget-related phrases and extract numeric values
    - Extract budget information from phrases like:
      * "under $50" → budget_max: 50
@@ -129,9 +129,13 @@ class VibeShoppingAgent:
    - If no budget is mentioned, leave budget_min and budget_max empty with confidence 0.0
    - Budget values should be numeric without dollar signs (e.g., 50, 100, 200)
 
-9. **Existing User Attributes:** If the user has already provided attributes, its upto you to decide if you should use them or ask for them again. If a user mentions an attribute that is not in the Existing User Attributes, feel free to add it to the attributes.
+* **Occasion and Category:** If you don't understand the occasion and category, prioritize asking for them in the follow-up questions
 
-10. If you are confident about the attributes, you can skip the follow-up questions.
+* **Existing User Attributes:** If the user has already provided attributes, its upto you to decide if you should use them or ask for them again. If a user mentions an attribute that is not in the Existing User Attributes, feel free to add it to the attributes.
+
+* **Previous User Inputs:** If previous user inputs are available, use them in addition to the current user input to improve your understanding of the user's preferences and needs
+
+* If you are confident about the attributes, you can skip the follow-up questions.
 
 ## Previous User Inputs:
 

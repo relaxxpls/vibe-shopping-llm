@@ -65,12 +65,6 @@ def main():
                 st.session_state.user_input = query
                 st.rerun()
 
-    # Main conversation area
-    # col1, col2 = st.columns([3, 1])
-
-    # with col1:
-
-    # Display conversation history
     if st.session_state.agent.conversation:
         st.header("💬 Conversation")
 
@@ -116,30 +110,6 @@ def main():
 
         # Rerun to update the display
         st.rerun()
-
-    # Product catalog info
-    # with col2:
-    #     st.header("📊 Catalog Info")
-
-    #     # Load and display catalog stats
-    #     try:
-    #         catalog_stats = {
-    #             "Total Products": len(st.session_state.agent.catalog),
-    #             "Categories": st.session_state.agent.catalog["category"].nunique(),
-    #             "Price Range": f"${st.session_state.agent.catalog['price'].min()} - ${st.session_state.agent.catalog['price'].max()}",
-    #         }
-
-    #         for stat, value in catalog_stats.items():
-    #             st.metric(stat, value)
-
-    #         # Category breakdown
-    #         st.subheader("Categories")
-    #         category_counts = st.session_state.agent.catalog["category"].value_counts()
-    #         for category, count in category_counts.items():
-    #             st.write(f"• {category.title()}: {count}")
-
-    #     except Exception as e:
-    #         st.error(f"Error loading catalog stats: {e}")
 
 
 def start_streamlit():
