@@ -43,8 +43,8 @@ class AttributeExtraction(BaseModel):
     attributes: ProductAttributes = Field(
         description="Extracted clothing attributes with confidence scores"
     )
-    follow_ups: List[str] = Field(
-        description="Follow-up questions for low-confidence attributes"
+    follow_up: str = Field(
+        description="A precise question to improve low-confidence attributes"
     )
 
 
@@ -66,7 +66,7 @@ class VibeShoppingAgent:
         self.attribute_extraction_prompt = ChatPromptTemplate.from_messages(
             [
                 SystemMessage(
-                    content="""You are a fashion item conversion agent. Your job is to take a vibe description and convert it into a structured JSON format with the following fields:
+                    content="""You are a fashion item conversion agent. Your job is to take a vibe description and conversation history and convert it into a structured JSON format with the following fields:
 
 ## Available Choices (use these when possible):
 
@@ -106,47 +106,49 @@ class VibeShoppingAgent:
 
 * **Assign confidence scores** (0.0 to 1.0) to each attribute based on how certain you are about the choice given the vibe.
 
-* **Generate follow-up questions** for attributes with confidence < 0.5 to gather more specific information. Keep the follow-up questions short, targeted and not too specific. Try for follow-ups that answer multiple attributes at once yet seem like a single meaningful question.
+* **Generate follow-up questions** for attributes with confidence < 0.5 to gather more specific information.
+    - Keep the follow-up questions short, targeted and not too specific.
+    - Try for follow-ups that answer multiple attributes at once yet seem like a single meaningful question.
+    - If you are confident about the attributes, you can skip the follow-up questions.
 
 * **Response format**: Return a JSON object with two main sections:
-   - `attributes`: All fields with their values and confidence scores as arrays
-   - `follow_ups`: Precise questions to improve low-confidence attributes
+    - `attributes`: All fields with their values and confidence scores as arrays
+    - `follow_up`: A precise question to improve low-confidence attributes
 
 * **Budget Range Handling**: 
-   - CRITICAL: Always look for budget-related phrases and extract numeric values
-   - Extract budget information from phrases like:
-     * "under $50" → budget_max: 50
-     * "between $30 and $100" → budget_min: 30, budget_max: 100
-     * "from $30 to $100" → budget_min: 30, budget_max: 100
-     * "$30-$100" → budget_min: 30, budget_max: 100
-     * "around $75" → budget_max: 75
-     * "budget-friendly" → budget_max: 50
-     * "affordable" → budget_max: 60
-     * "luxury" → budget_min: 200
-     * "expensive" → budget_min: 150
-   - When a range is specified (e.g., "between X and Y"), ALWAYS extract BOTH values
-   - If only one budget value is mentioned, use it as budget_max
-   - If no budget is mentioned, leave budget_min and budget_max empty with confidence 0.0
-   - Budget values should be numeric without dollar signs (e.g., 50, 100, 200)
+    - CRITICAL: Always look for budget-related phrases and extract numeric values
+    - Extract budget information from phrases like:
+        * "under $50" → budget_max: 50
+        * "between $30 and $100" → budget_min: 30, budget_max: 100
+        * "from $30 to $100" → budget_min: 30, budget_max: 100
+        * "$30-$100" → budget_min: 30, budget_max: 100
+        * "around $75" → budget_max: 75
+        * "budget-friendly" → budget_max: 50
+        * "affordable" → budget_max: 60
+        * "luxury" → budget_min: 200
+        * "expensive" → budget_min: 150
+    - When a range is specified (e.g., "between X and Y"), ALWAYS extract BOTH values
+    - If only one budget value is mentioned, use it as budget_max
+    - If no budget is mentioned, leave budget_min and budget_max empty with confidence 0.0
+    - Budget values should be numeric without dollar signs (e.g., 50, 100, 200)
 
-* **Occasion and Category:** If you don't understand the occasion and category, prioritize asking for them in the follow-up questions
+* **Occasion and Category:** If you don't understand the occasion and category, prioritize asking the user to elaborate the vibe in the follow-up questions
 
-* **Existing User Attributes:** If the user has already provided attributes, its upto you to decide if you should use them or ask for them again. If a user mentions an attribute that is not in the Existing User Attributes, feel free to add it to the attributes.
+* **Size Handling**: Look for size related phrases like skinny or tall or petite or plus size or small or medium and so on to make judgements.
 
-* **Previous User Inputs:** If previous user inputs are available, use them in addition to the current user input to improve your understanding of the user's preferences and needs
+* **Existing System Generated Attributes:** Attributes generated by you in previous iterations are available to you.
+    - Use them to improve your understanding of the user's preferences and needs.
+    - Add and remove attributes as per improvement in your understanding of the user's preferences and needs.
 
-* If you are confident about the attributes, you can skip the follow-up questions.
+* **Conversation History:** The conversation history shows the previous exchange between you and the user about what fashion items they are looking for.
 
-## Previous User Inputs:
+## Conversation History:
+{conversation_history}
 
-{previous_questions}
-
-## Existing User Attributes:
-
+## Existing System Generated Attributes:
 {current_attributes}
 
 ## Format instructions:
-
 {format_instructions}
 
 ## Example Input/Output:
@@ -155,25 +157,21 @@ class VibeShoppingAgent:
 **Output**: 
 ```json
 {
-  "attributes": {
-    "category": [{"value": "top", "confidence": 0.8}, {"value": "dress", "confidence": 0.6}],
-    "available_sizes": [{"value": "", "confidence": 0.0}],
-    "fit": [{"value": "Relaxed", "confidence": 0.9}, {"value": "Flowy", "confidence": 0.7}],
-    "fabric": [{"value": "Cotton", "confidence": 0.7}, {"value": "Modal jersey", "confidence": 0.6}],
-    "sleeve_length": [{"value": "Long sleeves", "confidence": 0.6}, {"value": "Short sleeves", "confidence": 0.5}],
-    "color_or_print": [{"value": "Warm taupe", "confidence": 0.5}, {"value": "Charcoal", "confidence": 0.4}],
-    "occasion": [{"value": "Everyday", "confidence": 0.8}],
-    "neckline": [{"value": "Round neck", "confidence": 0.6}, {"value": "V neck", "confidence": 0.5}],
-    "length": [{"value": "", "confidence": 0.0}],
-    "pant_type": [{"value": "", "confidence": 0.0}],
-    "budget_min": [{"value": "30", "confidence": 0.9}],
-    "budget_max": [{"value": "75", "confidence": 0.9}]
-  },
-  "follow_ups": [
-    “Any must-haves like sleeveless, budget or size to keep in mind?”,
-    "Any preferred colors or prints? Neutral tones, earth tones, or something more vibrant?",
-    "What neckline style appeals to you - round neck, V neck, or something else?"
-  ]
+    "attributes": {
+        "category": [{"value": "top", "confidence": 0.8}, {"value": "dress", "confidence": 0.6}],
+        "available_sizes": [{"value": "", "confidence": 0.0}],
+        "fit": [{"value": "Relaxed", "confidence": 0.9}, {"value": "Flowy", "confidence": 0.7}],
+        "fabric": [{"value": "Cotton", "confidence": 0.7}, {"value": "Modal jersey", "confidence": 0.6}],
+        "sleeve_length": [{"value": "Long sleeves", "confidence": 0.6}, {"value": "Short sleeves", "confidence": 0.5}],
+        "color_or_print": [{"value": "Warm taupe", "confidence": 0.5}, {"value": "Charcoal", "confidence": 0.4}],
+        "occasion": [{"value": "Everyday", "confidence": 0.8}],
+        "neckline": [{"value": "Round neck", "confidence": 0.6}, {"value": "V neck", "confidence": 0.5}],
+        "length": [{"value": "", "confidence": 0.0}],
+        "pant_type": [{"value": "", "confidence": 0.0}],
+        "budget_min": [{"value": "30", "confidence": 0.9}],
+        "budget_max": [{"value": "75", "confidence": 0.9}]
+    },
+    "follow_up": “Any must-haves like sleeveless, budget or size to keep in mind?”,
 }
 """
                 ),
@@ -187,14 +185,14 @@ class VibeShoppingAgent:
         """Main method to process user input and return appropriate response"""
         self.conversation.append({"role": "user", "content": user_input})
 
-        attributes_new, follow_ups = self._extract_attributes_llm(user_input)
+        attributes_new, follow_up = self._extract_attributes_llm(user_input)
         # self.attributes = always_merger.merge(self.attributes, attributes_new)
         self.attributes = attributes_new
 
-        if follow_ups and self.follow_up_count < self.max_follow_ups:
+        if follow_up and self.follow_up_count < self.max_follow_ups:
             self.follow_up_count += 1
             response = f"Great! I found some lovely options for '{user_input}'. "
-            response += f"To help me find the perfect pieces for you, {follow_ups[0]}"
+            response += f"To help me find the perfect pieces for you, {follow_up}"
 
             self.conversation.append({"role": "assistant", "content": response})
         else:
@@ -204,27 +202,22 @@ class VibeShoppingAgent:
     def _extract_attributes_llm(self, user_input: str) -> Dict[str, Any]:
         """Extract attributes from user input using LLM"""
         try:
-            previous_questions = [
-                message["content"]
-                for message in self.conversation
-                if message["role"] == "user"
-            ]
-
+            print("🔍 json.dumps(self.conversation)", json.dumps(self.conversation))
             chain = self.attribute_extraction_prompt | self.llm | self.attribute_parser
             result: dict = chain.invoke(
                 {
                     "user_input": user_input,
                     "format_instructions": self.attribute_parser.get_format_instructions(),
-                    "previous_questions": json.dumps(previous_questions),
+                    "conversation_history": json.dumps(self.conversation),
                     "current_attributes": json.dumps(self.attributes),
                 }
             )
 
             # Extract attributes from the new format
             raw_attributes = result.get("attributes", {})
-            follow_ups = result.get("follow_ups", [])
+            follow_up = result.get("follow_up", "")
 
-            print(f"📝 Follow-up questions available: {follow_ups}")
+            print(f"📝 Follow-up questions available: {follow_up}")
             print(
                 f"🔍 Extracted attributes for '{user_input}': {json.dumps(raw_attributes, indent=2)}"
             )
@@ -258,7 +251,7 @@ class VibeShoppingAgent:
                 f"🔍 Extracted attributes for '{user_input}': {json.dumps(extracted_attrs, indent=2)}"
             )
 
-            return extracted_attrs, follow_ups
+            return extracted_attrs, follow_up
         except Exception as e:
             print(f"Error extracting attributes: {e}")
             return {}, []
