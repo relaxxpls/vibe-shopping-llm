@@ -1,12 +1,11 @@
 from typing import Dict, List, Any
 import json
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 from src.find_recommendations import OutfitRecommendationAgent
-from deepmerge import always_merger
 
 CONFIDENCE_THRESHOLD = 0.7
 
@@ -62,11 +61,26 @@ class VibeShoppingAgent:
         # Initialize parsers
         self.attribute_parser = JsonOutputParser(pydantic_object=AttributeExtraction)
 
-        # System prompts
-        self.attribute_extraction_prompt = ChatPromptTemplate.from_messages(
-            [
-                SystemMessage(
-                    content="""You are a fashion item conversion agent. Your job is to take a vibe description and conversation history and convert it into a structured JSON format with the following fields:
+    def process_query(self, user_input: str) -> None:
+        """Main method to process user input and return appropriate response"""
+        self.conversation.append({"role": "user", "content": user_input})
+
+        attributes_new, follow_up = self._extract_attributes_llm(user_input)
+        # self.attributes = always_merger.merge(self.attributes, attributes_new)
+        self.attributes = attributes_new
+
+        if follow_up and self.follow_up_count < self.max_follow_ups:
+            self.follow_up_count += 1
+            response = f"Great! I found some lovely options for '{user_input}'. "
+            response += f"To help me find the perfect pieces for you, {follow_up}"
+
+            self.conversation.append({"role": "assistant", "content": response})
+        else:
+            response = self._generate_recommendations()
+            self.conversation.append({"role": "assistant", "content": response})
+
+    def _get_system_prompt(self) -> str:
+        return """You are a fashion item conversion agent. Your job is to take a vibe description and convert it into a structured JSON format with the following fields:
 
 ## Available Choices (use these when possible):
 
@@ -106,7 +120,7 @@ class VibeShoppingAgent:
 
 * **Assign confidence scores** (0.0 to 1.0) to each attribute based on how certain you are about the choice given the vibe.
 
-* **Generate follow-up questions** for attributes with confidence < 0.5 to gather more specific information.
+* **Generate follow-up questions** for attributes with confidence < {confidence_threshold} to gather more specific information.
     - Keep the follow-up questions short, targeted and not too specific.
     - Try for follow-ups that answer multiple attributes at once yet seem like a single meaningful question.
     - If you are confident about the attributes, you can skip the follow-up questions.
@@ -140,11 +154,6 @@ class VibeShoppingAgent:
     - Use them to improve your understanding of the user's preferences and needs.
     - Add and remove attributes as per improvement in your understanding of the user's preferences and needs.
 
-* **Conversation History:** The conversation history shows the previous exchange between you and the user about what fashion items they are looking for.
-
-## Conversation History:
-{conversation_history}
-
 ## Existing System Generated Attributes:
 {current_attributes}
 
@@ -156,71 +165,50 @@ class VibeShoppingAgent:
 **Input**: "Cozy coffee shop vibes for a weekend brunch between $30 and $75"
 **Output**: 
 ```json
-{
-    "attributes": {
-        "category": [{"value": "top", "confidence": 0.8}, {"value": "dress", "confidence": 0.6}],
-        "available_sizes": [{"value": "", "confidence": 0.0}],
-        "fit": [{"value": "Relaxed", "confidence": 0.9}, {"value": "Flowy", "confidence": 0.7}],
-        "fabric": [{"value": "Cotton", "confidence": 0.7}, {"value": "Modal jersey", "confidence": 0.6}],
-        "sleeve_length": [{"value": "Long sleeves", "confidence": 0.6}, {"value": "Short sleeves", "confidence": 0.5}],
-        "color_or_print": [{"value": "Warm taupe", "confidence": 0.5}, {"value": "Charcoal", "confidence": 0.4}],
-        "occasion": [{"value": "Everyday", "confidence": 0.8}],
-        "neckline": [{"value": "Round neck", "confidence": 0.6}, {"value": "V neck", "confidence": 0.5}],
-        "length": [{"value": "", "confidence": 0.0}],
-        "pant_type": [{"value": "", "confidence": 0.0}],
-        "budget_min": [{"value": "30", "confidence": 0.9}],
-        "budget_max": [{"value": "75", "confidence": 0.9}]
-    },
-    "follow_up": “Any must-haves like sleeveless, budget or size to keep in mind?”,
-}
+{{
+    "attributes": {{
+        "category": [{{"value": "top", "confidence": 0.8}}, {{"value": "dress", "confidence": 0.6}}],
+        "available_sizes": [{{"value": "", "confidence": 0.0}}],
+        "fit": [{{"value": "Relaxed", "confidence": 0.9}}, {{"value": "Flowy", "confidence": 0.7}}],
+        "fabric": [{{"value": "Cotton", "confidence": 0.7}}, {{"value": "Modal jersey", "confidence": 0.6}}],
+        "sleeve_length": [{{"value": "Long sleeves", "confidence": 0.6}}, {{"value": "Short sleeves", "confidence": 0.5}}],
+        "color_or_print": [{{"value": "Warm taupe", "confidence": 0.5}}, {{"value": "Charcoal", "confidence": 0.4}}],
+        "occasion": [{{"value": "Everyday", "confidence": 0.8}}],
+        "neckline": [{{"value": "Round neck", "confidence": 0.6}}, {{"value": "V neck", "confidence": 0.5}}],
+        "length": [{{"value": "", "confidence": 0.0}}],
+        "pant_type": [{{"value": "", "confidence": 0.0}}],
+        "budget_min": [{{"value": "30", "confidence": 0.9}}],
+        "budget_max": [{{"value": "75", "confidence": 0.9}}]
+    }},
+    "follow_up": "Any must-haves like sleeveless, budget or size to keep in mind?",
+}}
+```
 """
-                ),
-                HumanMessage(
-                    content="Convert the following vibe into JSON format: {user_input}"
-                ),
-            ]
-        )
-
-    def process_query(self, user_input: str) -> None:
-        """Main method to process user input and return appropriate response"""
-        self.conversation.append({"role": "user", "content": user_input})
-
-        attributes_new, follow_up = self._extract_attributes_llm(user_input)
-        # self.attributes = always_merger.merge(self.attributes, attributes_new)
-        self.attributes = attributes_new
-
-        if follow_up and self.follow_up_count < self.max_follow_ups:
-            self.follow_up_count += 1
-            response = f"Great! I found some lovely options for '{user_input}'. "
-            response += f"To help me find the perfect pieces for you, {follow_up}"
-
-            self.conversation.append({"role": "assistant", "content": response})
-        else:
-            response = self._generate_recommendations()
-            self.conversation.append({"role": "assistant", "content": response})
 
     def _extract_attributes_llm(self, user_input: str) -> Dict[str, Any]:
         """Extract attributes from user input using LLM"""
         try:
-            print("🔍 json.dumps(self.conversation)", json.dumps(self.conversation))
-            chain = self.attribute_extraction_prompt | self.llm | self.attribute_parser
-            result: dict = chain.invoke(
-                {
-                    "user_input": user_input,
-                    "format_instructions": self.attribute_parser.get_format_instructions(),
-                    "conversation_history": json.dumps(self.conversation),
-                    "current_attributes": json.dumps(self.attributes),
-                }
+            system_content = self._get_system_prompt().format(
+                current_attributes=json.dumps(self.attributes),
+                format_instructions=self.attribute_parser.get_format_instructions(),
+                confidence_threshold=0.5,
             )
+            messages: list[BaseMessage] = [SystemMessage(content=system_content)]
+
+            # Add conversation history
+            for msg in self.conversation:
+                if msg["role"] == "user":
+                    messages.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    messages.append(AIMessage(content=msg["content"]))
+
+            # Create chain and invoke
+            chain = self.llm | self.attribute_parser
+            result: dict = chain.invoke(messages)
 
             # Extract attributes from the new format
             raw_attributes = result.get("attributes", {})
             follow_up = result.get("follow_up", "")
-
-            print(f"📝 Follow-up questions available: {follow_up}")
-            print(
-                f"🔍 Extracted attributes for '{user_input}': {json.dumps(raw_attributes, indent=2)}"
-            )
 
             # Keep the full format with confidence scores for better attribute handling
             extracted_attrs = {}
@@ -246,10 +234,6 @@ class VibeShoppingAgent:
                     extracted_attrs[key].append(
                         {"value": value, "confidence": confidence}
                     )
-
-            print(
-                f"🔍 Extracted attributes for '{user_input}': {json.dumps(extracted_attrs, indent=2)}"
-            )
 
             return extracted_attrs, follow_up
         except Exception as e:
