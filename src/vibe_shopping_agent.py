@@ -1,11 +1,10 @@
-from typing import Dict, List, Any
+from typing import Dict, List
 import json
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, BaseMessage
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
-from src.find_recommendations import OutfitRecommendationAgent
+from src.find_recommendations import OutfitRecommendationAgent, RecommendationResult
 
 CONFIDENCE_THRESHOLD = 0.7
 
@@ -47,11 +46,29 @@ class AttributeExtraction(BaseModel):
     )
 
 
+class Product(BaseModel):
+    name: str = Field(description="The name of the product")
+    price: str = Field(description="The price of the product")
+
+
+class ProductWithJustification(BaseModel):
+    product: Product = Field(description="The product details")
+    justification: str = Field(description="The justification for the product")
+
+
+class BatchProductsWithJustification(BaseModel):
+    """Model for batch processing of product justifications"""
+
+    products: List[ProductWithJustification] = Field(
+        description="List of products with their justifications"
+    )
+
+
 class VibeShoppingAgent:
     def __init__(self):
         """Initialize the LLM-based vibe shopping agent"""
         self.conversation = []
-        self.attributes: dict[str, list[dict[str, Any]]] = {}
+        self.attributes: ProductAttributes = {}
         self.follow_up_count = 0
         self.max_follow_ups = 2
         self.recommendation_agent = OutfitRecommendationAgent()
@@ -60,12 +77,15 @@ class VibeShoppingAgent:
 
         # Initialize parsers
         self.attribute_parser = JsonOutputParser(pydantic_object=AttributeExtraction)
+        self.justification_parser = JsonOutputParser(
+            pydantic_object=BatchProductsWithJustification
+        )
 
     def process_query(self, user_input: str) -> None:
         """Main method to process user input and return appropriate response"""
         self.conversation.append({"role": "user", "content": user_input})
 
-        attributes_new, follow_up = self._extract_attributes_llm(user_input)
+        attributes_new, follow_up = self._extract_attributes_llm()
         # self.attributes = always_merger.merge(self.attributes, attributes_new)
         self.attributes = attributes_new
 
@@ -185,7 +205,7 @@ class VibeShoppingAgent:
 ```
 """
 
-    def _extract_attributes_llm(self, user_input: str) -> Dict[str, Any]:
+    def _extract_attributes_llm(self):
         """Extract attributes from user input using LLM"""
         try:
             system_content = self._get_system_prompt().format(
@@ -193,7 +213,7 @@ class VibeShoppingAgent:
                 format_instructions=self.attribute_parser.get_format_instructions(),
                 confidence_threshold=0.5,
             )
-            messages: list[BaseMessage] = [SystemMessage(content=system_content)]
+            messages: List[BaseMessage] = [SystemMessage(content=system_content)]
 
             # Add conversation history
             for msg in self.conversation:
@@ -204,23 +224,23 @@ class VibeShoppingAgent:
 
             # Create chain and invoke
             chain = self.llm | self.attribute_parser
-            result: dict = chain.invoke(messages)
+            result: Dict = chain.invoke(messages)
 
             # Extract attributes from the new format
-            raw_attributes = result.get("attributes", {})
-            follow_up = result.get("follow_up", "")
+            raw_attributes: Dict = result.get("attributes", {})
+            follow_up: str = result.get("follow_up", "")
 
             # Keep the full format with confidence scores for better attribute handling
             extracted_attrs = {}
             for key, attr_list in raw_attributes.items():
-                if not isinstance(attr_list, list):
+                if not isinstance(attr_list, List):
                     continue
 
                 if key not in extracted_attrs:
                     extracted_attrs[key] = []
 
                 for attr_item in attr_list:
-                    if not isinstance(attr_item, dict):
+                    if not isinstance(attr_item, Dict):
                         continue
 
                     value = attr_item.get("value", "")
@@ -238,7 +258,7 @@ class VibeShoppingAgent:
             return extracted_attrs, follow_up
         except Exception as e:
             print(f"Error extracting attributes: {e}")
-            return {}, []
+            return {}, ""
 
     def _generate_recommendations(self) -> str:
         """Generate product recommendations using the recommendation agent"""
@@ -251,56 +271,82 @@ class VibeShoppingAgent:
             # Get top 3 recommendations
             top_matches = matches[:3]
 
+            products_with_justifications = self._generate_justification_llm(top_matches)
+
             # Generate response with LLM-enhanced justifications
             response = "Here are my top picks for you:\n\n"
-
-            for i, match in enumerate(top_matches, 1):
-                product = match.product_details
-                response += f"{i}. **{product['name']}** (${product['price']})\n"
-                response += f"   {self._generate_justification_llm(product, match.matched_attributes)}\n\n"
-
-            # if len(matches) > 3:
-            #     response += "Would you like to see more options?"
+            for i, match in enumerate(products_with_justifications, 1):
+                product = match.get("product", {})
+                response += f"{i}. **{product.get('name', '')}** (${product.get('price', '')})\n {match.get('justification', '')}\n\n"
 
             return response
 
         except ValueError as e:
             return str(e)
         except Exception as e:
-            return f"I encountered an error finding recommendations: {str(e)}"
+            print(f"Error finding recommendations: {str(e)}")
+            return "I encountered an error finding recommendations. Please try again."
 
     def _generate_justification_llm(
-        self, product: Dict, matched_attributes: List[str]
-    ) -> str:
+        self, matches: List[RecommendationResult]
+    ) -> List[Dict]:
         """Generate LLM-based justification for product recommendations"""
         try:
-            justification_prompt = ChatPromptTemplate.from_messages(
-                [
-                    SystemMessage(
-                        content="""You are a fashion stylist explaining why a product matches a customer's request.
-                Create a brief, enthusiastic justification (1-2 sentences) that highlights the key features that make this item perfect for them.
-                Focus on the matched attributes and make it personal and engaging."""
-                    ),
-                    HumanMessage(
-                        content="Product: {product}\nMatched attributes: {matched_attributes}\nCustomer's style preferences: {customer_attributes}"
-                    ),
-                ]
-            )
+            system_message = """You are a fashion stylist explaining why products match a customer's request.
+Create brief, enthusiastic justifications (1-2 sentences each) that highlight the key features that make each item perfect for them.
+Focus on the matched attributes and make it personal and engaging.
 
-            chain = justification_prompt | self.llm
-            result = chain.invoke(
-                {
-                    "product": json.dumps(product),
-                    "matched_attributes": ", ".join(matched_attributes),
-                    "customer_attributes": json.dumps(self.attributes),
+Return a JSON object with a 'products' array containing each product with its justification."""
+
+            products_info: List[Dict] = []
+            for i, match in enumerate(matches, 1):
+                product_details = match.product_details
+                price = product_details.get("price", "Price not available")
+
+                product_info = {
+                    "number": i,
+                    "name": match.product_name,
+                    "price": str(price),
+                    "match_score": match.match_score,
+                    "matched_attributes": match.matched_attributes,
+                    "product_details": product_details,
+                    "reasoning": match.reasoning,
                 }
-            )
+                products_info.append(product_info)
 
-            return result.content.strip()
+            user_message = f"""Customer's style preferences: {json.dumps(self.attributes, indent=2)}
+
+Products to justify:
+{json.dumps(products_info, indent=2)}
+
+Please provide enthusiastic justifications for each product explaining why it matches the customer's preferences."""
+
+            messages = [
+                SystemMessage(content=system_message),
+                HumanMessage(content=user_message),
+            ]
+
+            # Use the JSON parser for structured output
+            chain = self.llm | self.justification_parser
+            result: Dict = chain.invoke(messages)
+
+            return result.get("products", [])
 
         except Exception as e:
-            print(f"Error generating justification: {e}")
-            return f"A versatile {product.get('category', 'piece')} that matches your style perfectly."
+            print(f"Error generating justifications: {e}")
+            # Return fallback justifications if LLM fails
+            fallback_results = []
+            for match in matches:
+                product_details = match.product_details
+                price = product_details.get("price", "Price not available")
+
+                fallback_results.append(
+                    ProductWithJustification(
+                        product=Product(name=match.product_name, price=str(price)),
+                        justification=f"A versatile {product_details.get('category', 'piece')} that matches your style perfectly with a {match.match_score:.2f} compatibility score.",
+                    )
+                )
+            return fallback_results
 
     def reset_conversation(self) -> None:
         """Reset the conversation state"""
