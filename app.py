@@ -15,6 +15,10 @@ def main():
     if "agent" not in st.session_state:
         st.session_state.agent = VibeShoppingAgent()
 
+    # Initialize loading state
+    if "is_loading" not in st.session_state:
+        st.session_state.is_loading = False
+
     # Header
     st.title("🛍️ Vibe Shopping Assistant")
     st.markdown("*Your personal AI stylist that understands your vibe*")
@@ -23,6 +27,7 @@ def main():
     with st.sidebar:
         if st.button("🔄 Start New Conversation", use_container_width=True):
             st.session_state.agent.reset_conversation()
+            st.session_state.is_loading = False
             st.rerun()
 
         # Display current inferred attributes
@@ -85,8 +90,16 @@ def main():
         """
         )
 
-    # Chat input
-    user_input = st.chat_input("Describe the vibe you're going for...")
+    # Chat input - disabled when loading
+    user_input = st.chat_input(
+        (
+            "Describe the vibe you're going for..."
+            if not st.session_state.is_loading
+            else "Processing your request..."
+        ),
+        key="user_input",
+        disabled=st.session_state.is_loading,
+    )
 
     # Handle example query from sidebar
     if "user_input" in st.session_state and st.session_state.user_input:
@@ -102,11 +115,13 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("Thinking about your perfect style..."):
                 try:
-                    # Get agent response
+                    st.session_state.is_loading = True
                     st.session_state.agent.process_query(user_input)
                 except Exception as e:
                     st.error(f"Sorry, I encountered an error: {str(e)}")
                     st.info("Please try again with a different query.")
+                finally:
+                    st.session_state.is_loading = False
 
         # Rerun to update the display
         st.rerun()

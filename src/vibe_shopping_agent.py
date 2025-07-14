@@ -276,8 +276,7 @@ class VibeShoppingAgent:
             # Generate response with LLM-enhanced justifications
             response = "Here are my top picks for you:\n\n"
             for i, match in enumerate(products_with_justifications, 1):
-                product = match.get("product", {})
-                response += f"{i}. **{product.get('name', '')}** (${product.get('price', '')})\n {match.get('justification', '')}\n\n"
+                response += f"{i}. **{match.product.name}** (${match.product.price})\n {match.justification}\n\n"
 
             return response
 
@@ -289,14 +288,25 @@ class VibeShoppingAgent:
 
     def _generate_justification_llm(
         self, matches: List[RecommendationResult]
-    ) -> List[Dict]:
+    ) -> List[ProductWithJustification]:
         """Generate LLM-based justification for product recommendations"""
-        try:
-            system_message = """You are a fashion stylist explaining why products match a customer's request.
-Create brief, enthusiastic justifications (1-2 sentences each) that highlight the key features that make each item perfect for them.
-Focus on the matched attributes and make it personal and engaging.
+        results = []
 
-Return a JSON object with a 'products' array containing each product with its justification."""
+        try:
+            system_message = f"""You are a fashion stylist explaining why products match a customer's request.
+
+## Instructions:
+
+* Create a brief, enthusiastic justifications (1-2 sentences each) that highlight the key features that make each item perfect for them.
+* **Conversation history**: Messages sent by the customer to build the customer's preferences.
+* **Style Preferences**: Customer's style preferences.
+* **Products to justify**: Products that match the customer's preferences from the catalog.
+* **Think step by step** about the customer's conversation history and style preferences and how they match the products. Consider the mood, style, occasion, and any specific details mentioned.
+* Focus on the matched attributes and make it personal and engaging.
+
+## Format instructions:
+{self.justification_parser.get_format_instructions()}
+"""
 
             products_info: List[Dict] = []
             for i, match in enumerate(matches, 1):
@@ -314,9 +324,14 @@ Return a JSON object with a 'products' array containing each product with its ju
                 }
                 products_info.append(product_info)
 
-            user_message = f"""Customer's style preferences: {json.dumps(self.attributes, indent=2)}
+            user_message = f"""
+## Conversation history:
+{json.dumps([msg["content"] for msg in self.conversation if msg["role"] == "user"], indent=2)}
 
-Products to justify:
+## Style preferences:
+{json.dumps(self.attributes, indent=2)}
+
+## Products to justify:
 {json.dumps(products_info, indent=2)}
 
 Please provide enthusiastic justifications for each product explaining why it matches the customer's preferences."""
@@ -328,25 +343,26 @@ Please provide enthusiastic justifications for each product explaining why it ma
 
             # Use the JSON parser for structured output
             chain = self.llm | self.justification_parser
-            result: Dict = chain.invoke(messages)
+            response: Dict = chain.invoke(messages)
 
-            return result.get("products", [])
+            for match in response.get("products", []):
+                results.append(ProductWithJustification(**match))
 
         except Exception as e:
             print(f"Error generating justifications: {e}")
             # Return fallback justifications if LLM fails
-            fallback_results = []
             for match in matches:
                 product_details = match.product_details
                 price = product_details.get("price", "Price not available")
 
-                fallback_results.append(
+                results.append(
                     ProductWithJustification(
                         product=Product(name=match.product_name, price=str(price)),
                         justification=f"A versatile {product_details.get('category', 'piece')} that matches your style perfectly with a {match.match_score:.2f} compatibility score.",
                     )
                 )
-            return fallback_results
+
+        return results
 
     def reset_conversation(self) -> None:
         """Reset the conversation state"""
